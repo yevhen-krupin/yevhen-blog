@@ -1,0 +1,48 @@
+Background
+During our work on the custom Java runtime we faced the challenge of the JAVA 9+ module system. I used to work with JDK11 before but I was never aware of Java modularity before I started working on it. Its introduction has affected most crucial areas: class loading, linking, native reflection code etc. The best source of information on this topic obviously would be JVM specs: https://docs.oracle.com/javase/specs/jls/se22/html/jls-7.html
+
+Modularity
+
+Modularity was introduced with project Jigsaw, in order to address the issues of scalability, strong encapsulation, integrity and so on. Java’s modularity is based on three whales: Modules, ModuleLayers and omnipresent ClassLoaders.
+
+Module is a group of related packages and resources, a unit that imposes strong rules of isolation of different parts of JDK and/or the application. The relationship between modules is usually declaratively expressed via `module-info.java` files. It means that modules have to explicitly declare their relationship:
+- When they let other modules to use their particular packages (other packages will be unavailable from other modules);
+- When they are dependent on another module;
+- When they allow another module reflectively access their packages (There is of course a caveat related to the backward compatibility in older versions of modular java);
+- When they provide or consume some services via ServiceLoader etc.
+
+Module system introduction obviously heavily impacted the class loading:
+- It should not be possible to define the class that is not supposed to be loaded from the current module;
+- It should not be possible to implement interface or extend class that is not available in the current module;
+
+Module properties and relationship are usually bidirectional and can be expressed in the following terms:
+- Module can be named and unnamed, unnamed modules are usually application modules that don’t have any module-info.java declaration;
+    - Unnamed module exports all packages to every module;
+    - Unnamed module can read and use any module;
+- Module A requires/reads module B - meaning, module A can access packages in module B that module B wishes to expose to module A;
+- Module A can export packages to module B - making public classes from the packages statically available to module B in compile time;
+- Module A can open packages to module B - making classes from the packages reflectively available to module B in runtime;
+- Module A provides service - registering an implementation of a service S making it available via ServiceLoader;
+- Module B uses service S - meaning module B needs the service S (usually an interface or an abstract class) and can obtain it via ServiceLoader (all rules above are still in place, e.g. if module B can’t read module A, it won’t be able to instantiate the provider and therefore won’t be able to obtain the service);
+- In JDK 11 by default (for the backward compatibility’s sake) the packages that were available in JDK8 are open for reflection access. The setting  - -illegal-access=deny should be used to disable this feature. In the later JDK versions this feature was tightened up to use deny by default and then completely removed;
+
+Furthermore, the module system boundaries should be maintained both in the Java world and in the native code in runtime e.g. during class definition or linking. 
+
+
+Run-time package
+Crucial to remember that when we define the class we don’t provide the runtime with the module of this class. The module is being calculated by JVM during the definition process using so called run-time package. It’s value is based on the combination of package name and the class loader initiated the class loading [https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-5.html#jvms-5.3]. It is very important concept we should always keep in mind. E.g. if you you will try to load the nested class N of a class C from module A using the different random class loader L and it will try to use classes from modules available uniquely to A, the class linking will fail. Why? Because N’s run-time package will be base on correct package name and wrong class loader, meaning N will land in the class loader L’s unnamed module U. Despite U can read any module, the modules never exported the packages to U so U’s hands are tied and linking process is obediently throwing an IllegalAccessError.
+
+However, JVM itself is above of the own physics law: there is the point in time when some super important classes like java.lang.Object or java.lang.Class are defined without module and then the module will be retrospectively assigned to them during the boot module definition in ModuleBootstrap. ModuleBootstrap is actually full of interesting information, I would recommend to read it like a good book, it will explain you a lot about module system. It is a single place in JVM where the whole module system is being inflated. It uses ModuleLoaderMap to segregate modules in the sets (not an official name for this concept) and identify what module will be defined with what class loader.
+
+Module loader map
+Another interesting aspect is the fact that the modules are defined in sets: boot modules, platform modules and application modules. Boot modules should be loaded by boot loader (null class loader), platform modules - by PlatformClassLoader, application modules - by AppClassLoader.
+
+There is a wonderful class ModuleLoaderMap that is aware of what module should be defined using what class loader. Interestingly, the class is being partly generated on build time, so to take a peek you can find it not in Github but in your IntelliJ using double-shift (search everywhere) and typing ModuleLoaderMap. ModuleLoaderMap knows what modules are considered to be boot modules, what are considered to be platform modules. Everything less is considered to be the application module.
+
+For the module being defined by the class loader means 
+- The packages name declared via module descriptor + the current class loader will identify the module of classes defined by current class loader in the packages of this module;
+- The service providers declared by the module via descriptor will be registered in the corresponding ServicesCatalog identifiable by current class loader;
+Warning, deeply technical details: During the module definition JVM in native code creates module entry in the module table from the class loader data, then it obtains package table from the class loader data and creates the package entries there, see modules.cpp. In fact only class loader has access to it’s own table so in this way we can say in scope of one class loader one package is mappable to the module. Class loader provides this data to the module because the module always knows what classloader it was defined with. If the package is not defined in class loader’s data’s package table, the module will be the class loader’s unnamed module.
+
+Module layers
+Another concept Java modularity is based on is ModuleLayer. There is a boot layer available by ModuleLayer.boot() method call. Most of the modules are defined in a layer. The layers are interconnected, but the layer only knows about parent layers, so when you enumerate the layer’s layers - you enumerate its parents.

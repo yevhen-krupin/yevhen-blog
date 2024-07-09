@@ -15,14 +15,14 @@ const isActive = pathname === "/";
   href="/"
   ><span
     style={{
-      "--myColor1": isActive ? "var(--text)" : "var(--pink)",
+      "--myColor1": isActive ? "var(--text)" : "var(--black)",
       "--myColor2": isActive ? "var(--text)" : "var(--purple)",
       backgroundImage:
-        "linear-gradient(45deg, var(--myColor1), var(--myColor2))",
+        "linear-gradient(45deg, var(--myColor1), var(--myColor1))",
       backgroundClip: "text",
       WebkitBackgroundClip: "text",
       color: "transparent",
       transition: "--myColor1 0.2s ease-out, --myColor2 0.2s ease-in-out",
-    }}>overreacted</span
+    }}>@ykrupin</span
   ></Link
 >
